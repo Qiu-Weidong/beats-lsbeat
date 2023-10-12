@@ -1,6 +1,6 @@
-# {Beat}
+# LsBeat
 
-Welcome to {Beat}.
+Welcome to LsBeat.
 
 Ensure that this folder is at the following location:
 `${GOPATH}/src/github.com/Qiu-Weidong/lsbeat`

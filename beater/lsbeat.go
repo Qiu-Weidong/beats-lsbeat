@@ -16,6 +16,8 @@ type lsbeat struct {
 	done   chan struct{}
 	config config.Config
 	client beat.Client
+
+	lastIndexTime time.Time
 }
 
 // New creates an instance of lsbeat.
@@ -25,9 +27,15 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
 
+	// fmt.Printf("config period = %d", c.Period)
+	// logp.Info("config period = %f, config path = %s", c.Period.Seconds(), c.Path)
+
 	bt := &lsbeat{
 		done:   make(chan struct{}),
 		config: c,
+
+		// 初始化 lastIndexTime
+		lastIndexTime: time.Now(),
 	}
 	return bt, nil
 }
@@ -43,7 +51,6 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 	}
 
 	ticker := time.NewTicker(bt.config.Period)
-	counter := 1
 	for {
 		select {
 		case <-bt.done:
@@ -51,16 +58,21 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 		case <-ticker.C:
 		}
 
-		event := beat.Event{
-			Timestamp: time.Now(),
-			Fields: common.MapStr{
-				"type":    b.Info.Name,
-				"counter": counter,
-			},
-		}
-		bt.client.Publish(event)
+		// 在这里写代码逻辑
+
+		// event := beat.Event{
+		// 	Timestamp: now,
+		// 	Fields: common.MapStr{
+		// 		// "type":    b.Info.Name,
+		// 		"type":    "job",
+		// 		"counter": counter,
+		// 	},
+		// }
+		// bt.client.Publish(event)
+
+		bt.collectJobs(bt.config.Path, b)
+
 		logp.Info("Event sent")
-		counter++
 	}
 }
 
@@ -68,4 +80,18 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 func (bt *lsbeat) Stop() {
 	bt.client.Close()
 	close(bt.done)
+}
+
+func (bt *lsbeat) collectJobs(baseDir string, b *beat.Beat) {
+	now := time.Now()
+	// 更新时间
+	bt.lastIndexTime = now
+
+	event := beat.Event{
+		Timestamp: now,
+		Fields: common.MapStr{
+			"type": "job",
+		},
+	}
+	bt.client.Publish(event)
 }

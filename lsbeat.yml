@@ -5,6 +5,9 @@
 lsbeat:
   # Defines how often an event is sent to the output
   period: 10s
+  path: "hello world"
+
+
 
 # ================================== General ===================================
 
@@ -70,7 +73,6 @@ setup.kibana:
 # ---------------------------- Elasticsearch Output ----------------------------
 output.elasticsearch:
   # Array of hosts to connect to.
-  # hosts: ["localhost:9200"]
   hosts: ["192.168.106.236:9200"]
 
   # Protocol - either `http` (default) or `https`.
