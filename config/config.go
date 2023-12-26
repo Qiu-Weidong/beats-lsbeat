@@ -7,6 +7,7 @@ import "time"
 
 type Config struct {
 	Period time.Duration `config:"period"`
+	Cycles int           `config:"cycles"`
 
 	RegistrarListPath string   `config:"registrar_list_path"`
 	RegistrarLogPath  string   `config:"registrar_log_path"`
@@ -18,4 +19,5 @@ var DefaultConfig = Config{
 	RegistrarListPath: "./data/registrar",
 	RegistrarLogPath:  "./data/registrar",
 	Path:              []string{},
+	Cycles:            8,
 }

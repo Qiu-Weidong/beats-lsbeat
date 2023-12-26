@@ -5,6 +5,7 @@
 lsbeat:
   # Defines how often an event is sent to the output
   period: 5s
+  cycles: 8 # 多少轮周期后更新目录
   path: ["/home/qiu/listtest"]
 
 

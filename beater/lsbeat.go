@@ -14,7 +14,6 @@ package beater
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +80,10 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 	}
 
 	ticker := time.NewTicker(bt.config.Period)
+
+	cnt := bt.config.Cycles
+	list_path := []string{}
+	log_path := []string{}
 	for {
 		select {
 		case <-bt.done:
@@ -88,9 +91,42 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 		case <-ticker.C:
 		}
 
-		for _, p := range bt.config.Path {
-			// 采集目录下的 list 和 log 文件
-			bt.collect(p, b)
+		cnt += 1
+
+		if cnt >= bt.config.Cycles {
+			cnt = 0
+			// 搜索一遍所有的 list 目录和 LOG 目录
+			list_path = findDirectories(bt.config.Path, "list")
+			log_path = findDirectories(bt.config.Path, "LOG")
+		}
+
+		// 移除掉已经不存在的条目
+		existingDirectories := []string{}
+		for _, dir := range list_path {
+			if _, err := os.Stat(dir); err == nil {
+				// 目录存在，将其添加到新的目录列表中
+				existingDirectories = append(existingDirectories, dir)
+			}
+		}
+		list_path = existingDirectories
+
+		existingDirectories = []string{}
+		for _, dir := range log_path {
+			if _, err := os.Stat(dir); err == nil {
+				// 目录存在，将其添加到新的目录列表中
+				existingDirectories = append(existingDirectories, dir)
+			}
+		}
+		log_path = existingDirectories
+
+		// 采集 list 文件
+		for _, p := range list_path {
+			// 记得测试一下目录是否存在
+			bt.collectList(p, b)
+		}
+		// 采集 log 文件
+		for _, p := range log_path {
+			bt.collectLog(p, b)
 		}
 
 		logp.Info("Event sent")
@@ -103,167 +139,90 @@ func (bt *lsbeat) Stop() {
 	close(bt.done)
 }
 
-func (bt *lsbeat) collect(baseDir string, b *beat.Beat) {
+// 查找所有的 list 目录
+func findDirectories(roots []string, target string) []string {
+	var directories []string
+
+	for _, root := range roots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+
+			if err != nil {
+				return err
+			}
+
+			if info.IsDir() && info.Name() == target {
+				directories = append(directories, path)
+			}
+			return nil
+		})
+		if err != nil {
+			continue
+		}
+	}
+
+	return directories
+}
+
+func (bt *lsbeat) collectList(listDir string, b *beat.Beat) {
 	now := time.Now()
+	modified := false
 
-	list_registrar_modified := false
-	log_registrar_modified := false
+	// 采集 list 目录下的所有 list 文件
+	files, err := os.ReadDir(listDir)
+	if err != nil {
+		logp.Err("can not open dir %s", listDir)
+	} else {
+		for _, file := range files {
+			if !file.IsDir() && filepath.Ext(file.Name()) == ".list" {
+				info, err := file.Info()
+				if err != nil {
+					logp.Err("can not info file %s", file.Name())
+				}
+				modTime := info.ModTime()
+				last := bt.list_collect_time(listDir, file.Name())
 
-	list_registrar_modified = bt.search_list(baseDir, b)
-	log_registrar_modified = bt.search_log(baseDir, b)
-
-	if list_registrar_modified {
-		// 更新 list 对应的 registrar 文件
+				if last == nil || last.Before(modTime) {
+					bt.sendList(listDir, file.Name(), b, modTime)
+					modified = true
+				}
+			}
+		}
+	}
+	if modified {
 		saveRegistrar(bt.config.RegistrarListPath, bt.registrar_list)
 	}
-	if log_registrar_modified {
-		// 更新 log 对应的 registrar 文件
-		saveRegistrar(bt.config.RegistrarLogPath, bt.registrar_log)
-	}
-	if !list_registrar_modified && !log_registrar_modified {
-		logp.Info("no file added at this period.")
-	}
-
-	// 更新时间
 	bt.lastIndexTime = now
 }
 
-func (bt *lsbeat) search_list(currentDir string, b *beat.Beat) bool {
-	result := false
-	entries, err := os.ReadDir(currentDir)
+func (bt *lsbeat) collectLog(logDir string, b *beat.Beat) {
+	now := time.Now()
+	modified := false
+
+	// 采集 list 目录下的所有 list 文件
+	files, err := os.ReadDir(logDir)
 	if err != nil {
-		logp.Err("can't read dir %s", currentDir)
-		return result
-	}
-
-	var list fs.DirEntry
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() == "list" {
-			// 如果有 list 目录, 那么就不需要再递归搜索了
-			list = entry
-			break
-		}
-	}
-
-	if list != nil {
-		// 查询 list 下面的 list 文件即可
-		fullPath := filepath.Join(currentDir, list.Name())
-		entries, err := os.ReadDir(fullPath)
-		if err != nil {
-			logp.Err("can't read dir %s", fullPath)
-			return result
-		}
-		for _, entry := range entries {
-			if filepath.Ext(entry.Name()) == ".list" {
-				// 检查是否以 list 结尾
-				info, err := entry.Info()
-				if err != nil {
-					logp.Err("can not info file %s", entry.Name())
-				}
-				modTime := info.ModTime()
-				last := bt.list_collect_time(fullPath, entry.Name())
-				if last == nil || last.Before(modTime) {
-					// 没有采集过, 采集之
-					bt.sendList(fullPath, entry.Name(), b, modTime)
-					result = true
-				}
-			}
-		}
-
+		logp.Err("can not open dir %s", logDir)
 	} else {
-		// 递归搜索
-		for _, entry := range entries {
-			if entry.IsDir() {
-				path := filepath.Join(currentDir, entry.Name())
-				result = result || bt.search_list(path, b)
-			} else if filepath.Ext(entry.Name()) == ".list" {
-				// 检查是否以 list 结尾
-				info, err := entry.Info()
+		for _, file := range files {
+			if !file.IsDir() && filepath.Ext(file.Name()) == ".log" {
+				info, err := file.Info()
 				if err != nil {
-					logp.Err("can not info file %s", entry.Name())
+					logp.Err("can not info file %s", file.Name())
 				}
 				modTime := info.ModTime()
-				last := bt.list_collect_time(currentDir, entry.Name())
-				if last == nil || last.Before(modTime) {
-					// 没有采集过, 采集之
-					bt.sendList(currentDir, entry.Name(), b, modTime)
-					result = true
-				}
+				last := bt.log_collect_time(logDir, file.Name())
 
+				if last == nil || last.Before(modTime) {
+					bt.sendLog(logDir, file.Name(), b, modTime)
+					modified = true
+				}
 			}
 		}
 	}
-
-	return result
-}
-
-func (bt *lsbeat) search_log(currentDir string, b *beat.Beat) bool {
-	result := false
-	entries, err := os.ReadDir(currentDir)
-	if err != nil {
-		logp.Err("can't read dir %s", currentDir)
-		return result
+	if modified {
+		saveRegistrar(bt.config.RegistrarLogPath, bt.registrar_log)
 	}
-
-	var log fs.DirEntry
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() == "LOG" {
-			// 如果有 list 目录, 那么就不需要再递归搜索了
-			log = entry
-			break
-		}
-	}
-
-	if log != nil {
-		// 查询 list 下面的 list 文件即可
-		fullPath := filepath.Join(currentDir, log.Name())
-		entries, err := os.ReadDir(fullPath)
-		if err != nil {
-			logp.Err("can't read dir %s", fullPath)
-			return result
-		}
-		for _, entry := range entries {
-			if filepath.Ext(entry.Name()) == ".log" {
-				// 检查是否以 list 结尾
-				info, err := entry.Info()
-				if err != nil {
-					logp.Err("can not info file %s", entry.Name())
-				}
-				modTime := info.ModTime()
-				last := bt.log_collect_time(fullPath, entry.Name())
-				if last == nil || last.Before(modTime) {
-					// 没有采集过, 采集之
-					bt.sendLog(fullPath, entry.Name(), b, modTime)
-					result = true
-				}
-			}
-		}
-
-	} else {
-		// 递归搜索
-		for _, entry := range entries {
-			if entry.IsDir() {
-				path := filepath.Join(currentDir, entry.Name())
-				result = result || bt.search_log(path, b)
-			} else if filepath.Ext(entry.Name()) == ".log" {
-				// 检查是否以 list 结尾
-				info, err := entry.Info()
-				if err != nil {
-					logp.Err("can not info file %s", entry.Name())
-				}
-				modTime := info.ModTime()
-				last := bt.log_collect_time(currentDir, entry.Name())
-				if last == nil || last.Before(modTime) {
-					// 没有采集过, 采集之
-					bt.sendLog(currentDir, entry.Name(), b, modTime)
-					result = true
-				}
-
-			}
-		}
-	}
-
-	return result
+	bt.lastIndexTime = now
 }
 
 func (bt *lsbeat) list_collect_time(path string, filename string) *time.Time {
@@ -289,6 +248,7 @@ func (bt *lsbeat) log_collect_time(path string, filename string) *time.Time {
 	return nil
 }
 
+// 这后边的代码应该没什么问题
 // 发送 list 文件
 func (bt *lsbeat) sendList(path string, filename string, b *beat.Beat, modtime time.Time) {
 	now := time.Now()
@@ -433,3 +393,166 @@ func saveRegistrar(registrarPath string, m map[string]map[string]time.Time) {
 		logp.Err("fail to write registrar.")
 	}
 }
+
+// func (bt *lsbeat) collect(baseDir string, b *beat.Beat) {
+// 	now := time.Now()
+
+// 	list_registrar_modified := false
+// 	log_registrar_modified := false
+
+// 	list_registrar_modified = bt.search_list(baseDir, b)
+// 	log_registrar_modified = bt.search_log(baseDir, b)
+
+// 	if list_registrar_modified {
+// 		// 更新 list 对应的 registrar 文件
+// 		saveRegistrar(bt.config.RegistrarListPath, bt.registrar_list)
+// 	}
+// 	if log_registrar_modified {
+// 		// 更新 log 对应的 registrar 文件
+// 		saveRegistrar(bt.config.RegistrarLogPath, bt.registrar_log)
+// 	}
+// 	if !list_registrar_modified && !log_registrar_modified {
+// 		logp.Info("no file added at this period.")
+// 	}
+
+// 	// 更新时间
+// 	bt.lastIndexTime = now
+// }
+
+// func (bt *lsbeat) search_list(currentDir string, b *beat.Beat) bool {
+// 	result := false
+// 	entries, err := os.ReadDir(currentDir)
+// 	if err != nil {
+// 		logp.Err("can't read dir %s", currentDir)
+// 		return result
+// 	}
+
+// 	var list fs.DirEntry
+// 	for _, entry := range entries {
+// 		if entry.IsDir() && entry.Name() == "list" {
+// 			// 如果有 list 目录, 那么就不需要再递归搜索了
+// 			list = entry
+// 			break
+// 		}
+// 	}
+
+// 	if list != nil {
+// 		// 查询 list 下面的 list 文件即可
+// 		fullPath := filepath.Join(currentDir, list.Name())
+// 		entries, err := os.ReadDir(fullPath)
+// 		if err != nil {
+// 			logp.Err("can't read dir %s", fullPath)
+// 			return result
+// 		}
+// 		for _, entry := range entries {
+// 			if filepath.Ext(entry.Name()) == ".list" {
+// 				// 检查是否以 list 结尾
+// 				info, err := entry.Info()
+// 				if err != nil {
+// 					logp.Err("can not info file %s", entry.Name())
+// 				}
+// 				modTime := info.ModTime()
+// 				last := bt.list_collect_time(fullPath, entry.Name())
+// 				if last == nil || last.Before(modTime) {
+// 					// 没有采集过, 采集之
+// 					bt.sendList(fullPath, entry.Name(), b, modTime)
+// 					result = true
+// 				}
+// 			}
+// 		}
+
+// 	} else {
+// 		// 递归搜索
+// 		for _, entry := range entries {
+// 			if entry.IsDir() {
+// 				path := filepath.Join(currentDir, entry.Name())
+// 				result = result || bt.search_list(path, b)
+// 			} else if filepath.Ext(entry.Name()) == ".list" {
+// 				// 检查是否以 list 结尾
+// 				info, err := entry.Info()
+// 				if err != nil {
+// 					logp.Err("can not info file %s", entry.Name())
+// 				}
+// 				modTime := info.ModTime()
+// 				last := bt.list_collect_time(currentDir, entry.Name())
+// 				if last == nil || last.Before(modTime) {
+// 					// 没有采集过, 采集之
+// 					bt.sendList(currentDir, entry.Name(), b, modTime)
+// 					result = true
+// 				}
+
+// 			}
+// 		}
+// 	}
+
+// 	return result
+// }
+
+// func (bt *lsbeat) search_log(currentDir string, b *beat.Beat) bool {
+// 	result := false
+// 	entries, err := os.ReadDir(currentDir)
+// 	if err != nil {
+// 		logp.Err("can't read dir %s", currentDir)
+// 		return result
+// 	}
+
+// 	var log fs.DirEntry
+// 	for _, entry := range entries {
+// 		if entry.IsDir() && entry.Name() == "LOG" {
+// 			// 如果有 list 目录, 那么就不需要再递归搜索了
+// 			log = entry
+// 			break
+// 		}
+// 	}
+
+// 	if log != nil {
+// 		// 查询 list 下面的 list 文件即可
+// 		fullPath := filepath.Join(currentDir, log.Name())
+// 		entries, err := os.ReadDir(fullPath)
+// 		if err != nil {
+// 			logp.Err("can't read dir %s", fullPath)
+// 			return result
+// 		}
+// 		for _, entry := range entries {
+// 			if filepath.Ext(entry.Name()) == ".log" {
+// 				// 检查是否以 list 结尾
+// 				info, err := entry.Info()
+// 				if err != nil {
+// 					logp.Err("can not info file %s", entry.Name())
+// 				}
+// 				modTime := info.ModTime()
+// 				last := bt.log_collect_time(fullPath, entry.Name())
+// 				if last == nil || last.Before(modTime) {
+// 					// 没有采集过, 采集之
+// 					bt.sendLog(fullPath, entry.Name(), b, modTime)
+// 					result = true
+// 				}
+// 			}
+// 		}
+
+// 	} else {
+// 		// 递归搜索
+// 		for _, entry := range entries {
+// 			if entry.IsDir() {
+// 				path := filepath.Join(currentDir, entry.Name())
+// 				result = result || bt.search_log(path, b)
+// 			} else if filepath.Ext(entry.Name()) == ".log" {
+// 				// 检查是否以 list 结尾
+// 				info, err := entry.Info()
+// 				if err != nil {
+// 					logp.Err("can not info file %s", entry.Name())
+// 				}
+// 				modTime := info.ModTime()
+// 				last := bt.log_collect_time(currentDir, entry.Name())
+// 				if last == nil || last.Before(modTime) {
+// 					// 没有采集过, 采集之
+// 					bt.sendLog(currentDir, entry.Name(), b, modTime)
+// 					result = true
+// 				}
+
+// 			}
+// 		}
+// 	}
+
+// 	return result
+// }
