@@ -129,10 +129,11 @@ func (bt *lsbeat) collect(baseDir string, b *beat.Beat) {
 }
 
 func (bt *lsbeat) search_list(currentDir string, b *beat.Beat) bool {
+	result := false
 	entries, err := os.ReadDir(currentDir)
 	if err != nil {
 		logp.Err("can't read dir %s", currentDir)
-		return false
+		return result
 	}
 
 	var list fs.DirEntry
@@ -143,8 +144,6 @@ func (bt *lsbeat) search_list(currentDir string, b *beat.Beat) bool {
 			break
 		}
 	}
-
-	result := false
 
 	if list != nil {
 		// 查询 list 下面的 list 文件即可
@@ -195,14 +194,15 @@ func (bt *lsbeat) search_list(currentDir string, b *beat.Beat) bool {
 		}
 	}
 
-	return false
+	return result
 }
 
 func (bt *lsbeat) search_log(currentDir string, b *beat.Beat) bool {
+	result := false
 	entries, err := os.ReadDir(currentDir)
 	if err != nil {
 		logp.Err("can't read dir %s", currentDir)
-		return false
+		return result
 	}
 
 	var log fs.DirEntry
@@ -213,8 +213,6 @@ func (bt *lsbeat) search_log(currentDir string, b *beat.Beat) bool {
 			break
 		}
 	}
-
-	result := false
 
 	if log != nil {
 		// 查询 list 下面的 list 文件即可
@@ -265,7 +263,7 @@ func (bt *lsbeat) search_log(currentDir string, b *beat.Beat) bool {
 		}
 	}
 
-	return false
+	return result
 }
 
 func (bt *lsbeat) list_collect_time(path string, filename string) *time.Time {
