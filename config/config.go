@@ -8,11 +8,14 @@ import "time"
 type Config struct {
 	Period time.Duration `config:"period"`
 
-	Path string `config: "path"`
+	RegistrarListPath string   `config:"registrar_list_path"`
+	RegistrarLogPath  string   `config:"registrar_log_path"`
+	Path              []string `config: "path"`
 }
 
 var DefaultConfig = Config{
-	Period: 1 * time.Second,
-
-	Path: ".",
+	Period:            10 * time.Second,
+	RegistrarListPath: "./data/registrar",
+	RegistrarLogPath:  "./data/registrar",
+	Path:              []string{},
 }
