@@ -50,6 +50,8 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 		return err
 	}
 
+	cnt := 1
+
 	ticker := time.NewTicker(bt.config.Period)
 	for {
 		select {
@@ -59,18 +61,11 @@ func (bt *lsbeat) Run(b *beat.Beat) error {
 		}
 
 		// 在这里写代码逻辑
-
-		// event := beat.Event{
-		// 	Timestamp: now,
-		// 	Fields: common.MapStr{
-		// 		// "type":    b.Info.Name,
-		// 		"type":    "job",
-		// 		"counter": counter,
-		// 	},
-		// }
-		// bt.client.Publish(event)
-
-		bt.collectJobs(bt.config.Path, b)
+		logp.Info("before sleep cnt = %d", cnt)
+		// 休眠 10s 钟
+		time.Sleep(10 * time.Second)
+		logp.Info("after sleep cnt = %d", cnt)
+		cnt += 1
 
 		logp.Info("Event sent")
 	}
